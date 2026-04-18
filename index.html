@@ -1355,29 +1355,40 @@
             return now.toISOString().slice(0, 16);
         }
 
+        function fieldSaveNow() {
+            // Immediate save — no debounce. Called on page hide/visibility change.
+            try {
+                var data = collectAllFieldData();
+                var proj = getActiveProject();
+                if (proj) {
+                    proj.sites   = data;
+                    proj.counter = fieldSiteCounter;
+                    proj.savedAt = new Date().toISOString();
+                }
+                fieldProjectsData.savedAt = new Date().toISOString();
+                localStorage.setItem(FIELD_STORAGE_KEY, JSON.stringify(fieldProjectsData));
+                // Also write emergency copy to sessionStorage (survives back-navigation)
+                if (proj) {
+                    try { sessionStorage.setItem('gscp_emergency_backup', JSON.stringify(proj)); } catch(e) {}
+                }
+            } catch(e) {}
+        }
+
         function fieldAutoSave() {
+            // Also fire an immediate save right now (catches fast back-taps)
+            fieldSaveNow();
+            // Then schedule a debounced save for indicator update
             clearTimeout(fieldAutoSaveTimer);
             fieldAutoSaveTimer = setTimeout(function() {
-                try {
-                    var data = collectAllFieldData();
-                    var proj = getActiveProject();
-                    if (proj) {
-                        proj.sites   = data;
-                        proj.counter = fieldSiteCounter;
-                        proj.savedAt = new Date().toISOString();
-                    }
-                    fieldProjectsData.savedAt = new Date().toISOString();
-                    localStorage.setItem(FIELD_STORAGE_KEY, JSON.stringify(fieldProjectsData));
-                    var indicator = document.getElementById('fieldSaveIndicator');
-                    if (indicator) {
-                        indicator.textContent = '✅ Auto-saved';
-                        indicator.style.color = '#a9dfbf';
-                        setTimeout(function() {
-                            indicator.textContent = '💾 Session active';
-                            indicator.style.color = 'rgba(255,255,255,0.8)';
-                        }, 2500);
-                    }
-                } catch(e) { /* storage full */ }
+                var indicator = document.getElementById('fieldSaveIndicator');
+                if (indicator) {
+                    indicator.textContent = '\u2705 Auto-saved';
+                    indicator.style.color = '#a9dfbf';
+                    setTimeout(function() {
+                        indicator.textContent = '\U0001F4BE Session active';
+                        indicator.style.color = 'rgba(255,255,255,0.8)';
+                    }, 2500);
+                }
             }, 700);
         }
 
@@ -2304,67 +2315,53 @@
         }
 
         function restoreFieldSession() {
-            var raw = localStorage.getItem(FIELD_STORAGE_KEY);
-            if (!raw) return;
+            var banner = document.getElementById('sessionRecoveryBanner');
+            if (banner) banner.remove();
+
+            // Read from v4 projects structure
+            var proj = getActiveProject();
+            // Fallback to sessionStorage emergency backup
+            if (!proj || !proj.sites || !proj.sites.length) {
+                try {
+                    var eb = sessionStorage.getItem('gscp_emergency_backup');
+                    if (eb) { var ed = JSON.parse(eb); if (ed && ed.sites && ed.sites.length) proj = ed; }
+                } catch(e2) {}
+            }
+            if (!proj || !proj.sites || !proj.sites.length) {
+                alert('No saved sites found for this project.');
+                return;
+            }
+
             try {
-                var data   = JSON.parse(raw);
-                var banner = document.getElementById('sessionRecoveryBanner');
-                if (banner) banner.remove();
-
-                if (!data.sites || !data.sites.length) return;
-
+                var sites = proj.sites;
                 fieldSiteCounter = 0;
                 var emptyState = document.getElementById('fieldEmptyState');
                 if (emptyState) emptyState.remove();
 
-                data.sites.forEach(function(siteData) {
+                sites.forEach(function(siteData) {
                     addFieldSite(siteData);
                     var siteId = 'fsite_' + fieldSiteCounter;
-
-                    (siteData.parameters || []).forEach(function(p) {
-                        if (p.parameter === 'other') {
-                            addFieldParameter(siteId, 'other');
-                            var onEl  = document.getElementById(siteId + '_otherName');
-                            var ouEl  = document.getElementById(siteId + '_otherUnit');
-                            var ovEl  = document.getElementById(siteId + '_value_other');
-                            var onote = document.getElementById(siteId + '_note_other');
-                            if (onEl)  onEl.value  = p.name;
-                            if (ouEl)  ouEl.value  = p.unit;
-                            if (ovEl)  ovEl.value  = p.value;
-                            if (onote) onote.value = p.note;
-                        } else {
-                            addFieldParameter(siteId, p.parameter);
-                            var vEl = document.getElementById(siteId + '_value_' + p.parameter);
-                            var nEl = document.getElementById(siteId + '_note_' + p.parameter);
-                            if (vEl) vEl.value = p.value;
-                            if (nEl) nEl.value = p.note;
-                        }
-                    });
-
-                    (siteData.photos || []).forEach(function(src, idx) {
-                        var pid   = siteId + '_ph_r' + idx;
-                        var phCon = document.getElementById(siteId + '_photos');
-                        if (!phCon) return;
-                        var div = document.createElement('div');
-                        div.id  = pid;
-                        div.style.cssText = 'position: relative; border-radius: 8px; overflow: hidden; aspect-ratio: 1/1; background: #eee;';
-                        div.innerHTML = '<img src="' + src + '" style="width:100%; height:100%; object-fit:cover;">'
-                            + '<button onclick="document.getElementById(\'' + pid + '\').remove(); fieldAutoSave();" style="position:absolute; top:4px; right:4px; background:rgba(220,53,69,0.92); color:white; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:0.85rem; font-weight:700;">✕</button>';
-                        phCon.appendChild(div);
-                    });
-
+                    restoreSiteData(siteId, siteData);
                     updateSiteHeader(siteId);
                 });
 
                 updateFieldSiteCount();
-                alert('✅ Session restored: ' + data.sites.length + ' site(s) loaded.');
+                renderFieldProjectSelector();
+
+                var savedAgo = '';
+                if (proj.savedAt) {
+                    var secs = Math.round((Date.now() - new Date(proj.savedAt).getTime()) / 1000);
+                    savedAgo = secs < 60 ? ' (saved ' + secs + 's ago)' :
+                               secs < 3600 ? ' (saved ' + Math.round(secs/60) + 'min ago)' :
+                               ' (saved ' + Math.round(secs/3600) + 'hr ago)';
+                }
+                alert('\u2705 Restored ' + sites.length + ' site(s)' + savedAgo + '.');
 
             } catch(e) {
-                console.error('Session restore error:', e);
-                alert('⚠️ Could not restore session. Data may be corrupted.');
+                console.error('Restore error:', e);
+                alert('\u26A0 Could not restore: ' + e.message);
             }
         }
-
         function dismissFieldRecovery() {
             if (!confirm('Discard the saved session? Previously collected data will be lost.')) return;
             localStorage.removeItem(FIELD_STORAGE_KEY);
@@ -3867,7 +3864,25 @@
 
 
     // ── Init tools on load ──────────────────────────────────────
+    
+        // ── Emergency save on page exit ────────────────────────────────
+        window.addEventListener('pagehide',        function() { if(typeof fieldSaveNow==='function') fieldSaveNow(); });
+        window.addEventListener('visibilitychange', function() { if(document.visibilityState==='hidden' && typeof fieldSaveNow==='function') fieldSaveNow(); });
+        window.addEventListener('beforeunload',    function() { if(typeof fieldSaveNow==='function') fieldSaveNow(); });
+
+        // ── Back button trap (Android PWA) ──────────────────────────────
+        function armBackButtonTrap() { try { history.pushState({gscp:true},''); } catch(e) {} }
+        window.addEventListener('popstate', function() {
+            if (document.querySelectorAll('.field-site-card').length > 0) {
+                fieldSaveNow();
+                if (!confirm('Your field data has been auto-saved.\n\nLeave the app? Tap Cancel to stay.')) {
+                    armBackButtonTrap();
+                }
+            }
+        });
+
     window.addEventListener('DOMContentLoaded', function() {
+        armBackButtonTrap();
         loadFieldTool();
         loadReviewTool();
     });
