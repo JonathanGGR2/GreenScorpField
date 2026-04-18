@@ -1427,12 +1427,19 @@
         }
 
         function savePhotoIDB(key, dataUrl) {
-            openPhotoDB().then(function(db) {
-                if (!db) return;
-                try {
-                    var tx = db.transaction('photos', 'readwrite');
-                    tx.objectStore('photos').put(dataUrl, key);
-                } catch(e) {}
+            // Returns a Promise that resolves ONLY when tx.oncomplete fires
+            // — data is durably written to disk before we continue.
+            return openPhotoDB().then(function(db) {
+                if (!db) return Promise.reject('IDB unavailable');
+                return new Promise(function(resolve, reject) {
+                    try {
+                        var tx = db.transaction('photos', 'readwrite');
+                        tx.objectStore('photos').put(dataUrl, key);
+                        tx.oncomplete = function() { resolve(key); };
+                        tx.onerror    = function() { reject(tx.error); };
+                        tx.onabort    = function() { reject('aborted'); };
+                    } catch(e) { reject(e); }
+                });
             });
         }
 
@@ -1787,18 +1794,51 @@
             var phCon = document.getElementById(siteId + '_photos');
             if (!phCon) return;
             (siteData.photos || []).forEach(function(photoRef, idx) {
-                if (!photoRef || photoRef.indexOf('data:') !== 0) return;
-                var pid = siteId + '_ph_r_' + idx + '_' + Date.now();
-                var div = document.createElement('div');
-                div.id  = pid;
-                div.setAttribute('data-photo-key', pid);
-                div.style.cssText = 'position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1/1;background:#eee;';
-                div.innerHTML = '<img src="' + photoRef + '" style="width:100%;height:100%;object-fit:cover;">'
-                    + '<button onclick="document.getElementById(\'' + pid + '\').remove();fieldAutoSave();" '
-                    + 'style="position:absolute;top:4px;right:4px;background:rgba(220,53,69,0.92);'
-                    + 'color:white;border:none;border-radius:50%;width:24px;height:24px;'
-                    + 'cursor:pointer;font-size:0.85rem;font-weight:700;">✕</button>';
-                phCon.appendChild(div);
+                if (!photoRef) return;
+                var pid       = siteId + '_ph_r_' + idx;
+                var isDataUrl = photoRef.indexOf('data:') === 0;
+
+                function renderPhoto(src, container) {
+                    var div = document.createElement('div');
+                    div.id  = pid;
+                    div.setAttribute('data-photo-key', pid);
+                    div.style.cssText = 'position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1/1;background:#eee;';
+                    div.innerHTML = '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;">'
+                        + '<button onclick="document.getElementById(\'' + pid + '\').remove();fieldAutoSave();" '
+                        + 'style="position:absolute;top:4px;right:4px;background:rgba(220,53,69,0.92);'
+                        + 'color:white;border:none;border-radius:50%;width:24px;height:24px;'
+                        + 'cursor:pointer;font-size:0.85rem;font-weight:700;">✕</button>';
+                    if (document.body.contains(container)) container.appendChild(div);
+                }
+
+                if (isDataUrl) {
+                    // Fallback data URL — render immediately
+                    renderPhoto(photoRef, phCon);
+                } else {
+                    // IDB key — show loading tile then load async
+                    var ph = document.createElement('div');
+                    ph.style.cssText = 'border-radius:8px;background:#d0e8f5;aspect-ratio:1/1;'
+                        + 'display:flex;align-items:center;justify-content:center;'
+                        + 'font-size:0.72rem;color:#1a5276;text-align:center;padding:6px;';
+                    ph.innerHTML = '📷<br>Loading…';
+                    phCon.appendChild(ph);
+                    (function(key, placeholder, con) {
+                        loadPhotoIDB(key).then(function(src) {
+                            if (!document.body.contains(placeholder)) return;
+                            placeholder.remove();
+                            if (src) {
+                                renderPhoto(src, con);
+                            } else {
+                                var err = document.createElement('div');
+                                err.style.cssText = 'border-radius:8px;background:#fdebd0;aspect-ratio:1/1;'
+                                    + 'display:flex;align-items:center;justify-content:center;'
+                                    + 'font-size:0.7rem;color:#784212;text-align:center;padding:6px;';
+                                err.innerHTML = '⚠️<br>Photo<br>not found';
+                                if (document.body.contains(con)) con.appendChild(err);
+                            }
+                        });
+                    })(photoRef, ph, phCon);
+                }
             });
         }
 
@@ -2256,47 +2296,47 @@
         var gsLogoImg = null;
         (function() { gsLogoImg = new Image(); gsLogoImg.src = GSCP_LOGO_B64; })();
 
-        // ── Compress photo for reliable localStorage storage ────────────────
-        // IDB writes can be aborted on page close. Compression + localStorage
-        // is synchronous and guaranteed to persist across all exit scenarios.
-        function compressFieldPhoto(src, callback) {
-            var img = new Image();
-            img.onload = function() {
-                var maxDim = 1200;
-                var scale  = Math.min(1, maxDim / Math.max(img.width, img.height));
-                var canvas = document.createElement('canvas');
-                canvas.width  = Math.round(img.width  * scale);
-                canvas.height = Math.round(img.height * scale);
-                canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-                callback(canvas.toDataURL('image/jpeg', 0.55));
-            };
-            img.onerror = function() { callback(src); }; // fallback: original
-            img.src = src;
-        }
-
         function handleFieldPhotos(siteId, event, applyWatermark) {
             var files     = Array.prototype.slice.call(event.target.files);
             var container = document.getElementById(siteId + '_photos');
             files.forEach(function(file) {
                 if (!file.type.startsWith('image/')) return;
-                var reader  = new FileReader();
+                var reader   = new FileReader();
                 var photoKey = siteId + '_ph_' + Date.now() + '_' + Math.random().toString(36).substr(2,4);
                 reader.onload = function(e) {
                     function addPhoto(src) {
-                        // Compress THEN store — so fieldSaveNow always has data
-                        compressFieldPhoto(src, function(compressed) {
-                            var item = document.createElement('div');
-                            item.id  = photoKey;
-                            item.setAttribute('data-photo-key', photoKey);
-                            item.style.cssText = 'position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1/1;background:#eee;';
-                            item.innerHTML = '<img src="' + compressed + '" style="width:100%;height:100%;object-fit:cover;">'
-                                + '<button onclick="document.getElementById(\'' + photoKey + '\').remove();fieldAutoSave();" '
-                                + 'style="position:absolute;top:4px;right:4px;background:rgba(220,53,69,0.92);'
-                                + 'color:white;border:none;border-radius:50%;width:24px;height:24px;'
-                                + 'cursor:pointer;font-size:0.85rem;font-weight:700;">✕</button>';
-                            container.appendChild(item);
-                            fieldAutoSave(); // called AFTER compression — data is ready
-                        });
+                        // Step 1 — show photo immediately in DOM (user sees it right away)
+                        var item = document.createElement('div');
+                        item.id  = photoKey;
+                        // NOTE: data-photo-key is set ONLY after IDB write is confirmed
+                        item.style.cssText = 'position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1/1;background:#eee;';
+                        item.innerHTML = '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;">'
+                            + '<div id="' + photoKey + '_sv" style="position:absolute;bottom:0;left:0;right:0;'
+                            + 'background:rgba(0,0,0,0.45);color:white;font-size:0.65rem;'
+                            + 'text-align:center;padding:2px 0;">💾 Saving…</div>'
+                            + '<button onclick="document.getElementById(\'' + photoKey + '\').remove();fieldAutoSave();"'
+                            + ' style="position:absolute;top:4px;right:4px;background:rgba(220,53,69,0.92);'
+                            + 'color:white;border:none;border-radius:50%;width:24px;height:24px;'
+                            + 'cursor:pointer;font-size:0.85rem;font-weight:700;">✕</button>';
+                        container.appendChild(item);
+
+                        // Step 2 — await confirmed IDB write (tx.oncomplete = durably on disk)
+                        savePhotoIDB(photoKey, src)
+                            .then(function() {
+                                // Write confirmed — safe to store key in localStorage
+                                item.setAttribute('data-photo-key', photoKey);
+                                var sv = document.getElementById(photoKey + '_sv');
+                                if (sv) sv.remove();
+                                fieldAutoSave(); // saves tiny key string, not photo data
+                            })
+                            .catch(function() {
+                                // IDB failed — store data URL directly as last resort
+                                item.setAttribute('data-photo-key', photoKey);
+                                item.setAttribute('data-photo-url', src);
+                                var sv = document.getElementById(photoKey + '_sv');
+                                if (sv) sv.textContent = '⚠ Save issue';
+                                fieldAutoSave();
+                            });
                     }
                     if (applyWatermark) {
                         applyFieldWatermark(e.target.result, siteId, addPhoto);
@@ -2308,7 +2348,6 @@
             });
             event.target.value = '';
         }
-
         function applyFieldWatermark(imageSrc, siteId, callback) {
             var siteName = (document.getElementById(siteId + '_name') || {}).value || 'Unknown';
             var lat      = (document.getElementById(siteId + '_lat')  || {}).value || '--';
@@ -2471,10 +2510,11 @@
                 });
             }
 
-            // Photos stored as compressed data URLs in img.src
+            // Photos: IDB key (most cases) or direct data URL (IDB-failed fallback)
             var photos = [];
-            document.querySelectorAll('#' + siteId + '_photos img').forEach(function(img) {
-                if (img.src && img.src.indexOf('data:') === 0) photos.push(img.src);
+            document.querySelectorAll('#' + siteId + '_photos [data-photo-key]').forEach(function(div) {
+                var fallback = div.getAttribute('data-photo-url');
+                photos.push(fallback ? fallback : div.getAttribute('data-photo-key'));
             });
 
             return {
@@ -4189,17 +4229,31 @@
 
     // ── Exit modal functions ────────────────────────────────────────
     function showExitModal() {
-        var m = document.getElementById('exitModal');
-        if (m) m.classList.add('visible');
+        var el = document.getElementById('exitModal');
+        if (!el) return;
+        var sub = document.getElementById('exitModalSub');
+        if (sub) {
+            var n = new Date();
+            var t = n.getHours().toString().padStart(2,'0') + ':'
+                  + n.getMinutes().toString().padStart(2,'0') + ':'
+                  + n.getSeconds().toString().padStart(2,'0');
+            var ns = document.querySelectorAll('.field-site-card').length;
+            var np = document.querySelectorAll('[data-photo-key]').length;
+            sub.innerHTML = '✅ Autosaved at ' + t
+                + ' &middot; ' + ns + ' site' + (ns===1?'':'s')
+                + (np ? ' &middot; ' + np + ' photo' + (np===1?'':'s') : '')
+                + '<br><br>Are you sure you want to leave the app?';
+        }
+        el.style.display = 'flex';
     }
     function stayInApp() {
-        var m = document.getElementById('exitModal');
-        if (m) m.classList.remove('visible');
+        var el = document.getElementById('exitModal');
+        if (el) el.style.display = 'none';
         armBackButtonTrap();
     }
     function confirmExit() {
-        var m = document.getElementById('exitModal');
-        if (m) m.classList.remove('visible');
+        var el = document.getElementById('exitModal');
+        if (el) el.style.display = 'none';
         history.back();
     }
 
@@ -4312,5 +4366,18 @@
   </div>
 </div>
 
+
+<!-- EXIT CONFIRMATION MODAL -->
+<div id="exitModal" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);align-items:flex-end;justify-content:center;">
+  <div class="exit-modal-card">
+    <div class="exit-modal-icon">💾</div>
+    <div class="exit-modal-title">Your data has been saved</div>
+    <div class="exit-modal-sub" id="exitModalSub">Auto-saved. Sure you want to leave?</div>
+    <div class="exit-modal-btns">
+      <button class="exit-btn-stay" onclick="stayInApp()">Stay in App</button>
+      <button class="exit-btn-exit" onclick="confirmExit()">Exit</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
