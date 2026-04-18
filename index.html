@@ -1208,6 +1208,38 @@
         .pwa-tab.active { display: block; }
         #fieldToolContainer { padding: 0; }
         #reviewToolContainer { padding: 30px; }
+
+        /* ── Exit confirmation modal ─────────────────────────────────── */
+        #exitModal {
+            display: none; position: fixed; inset: 0; z-index: 99999;
+            background: rgba(0,0,0,0.55);
+            align-items: flex-end; justify-content: center;
+        }
+        #exitModal.visible { display: flex; }
+        .exit-modal-card {
+            background: white; border-radius: 20px 20px 0 0;
+            padding: 26px 24px 34px; width: 100%; max-width: 480px;
+            box-shadow: 0 -8px 40px rgba(0,0,0,0.25);
+            animation: slideUpModal 0.28s ease;
+        }
+        @keyframes slideUpModal {
+            from { transform: translateY(100%); }
+            to   { transform: translateY(0); }
+        }
+        .exit-modal-icon { font-size: 2.2rem; text-align: center; margin-bottom: 10px; }
+        .exit-modal-title { font-size: 1.1rem; font-weight: 700; color: #1a3c2a; text-align: center; margin-bottom: 6px; }
+        .exit-modal-sub   { font-size: 0.85rem; color: #666; text-align: center; margin-bottom: 22px; line-height: 1.5; }
+        .exit-modal-btns  { display: flex; gap: 12px; }
+        .exit-btn-stay {
+            flex: 2; padding: 15px; border: none; border-radius: 12px;
+            background: linear-gradient(135deg, #1a3c2a, #2c5530);
+            color: white; font-size: 1rem; font-weight: 700; cursor: pointer;
+        }
+        .exit-btn-exit {
+            flex: 1; padding: 15px; border: 2px solid #e0e0e0; border-radius: 12px;
+            background: white; color: #888; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+        }
+
     </style>
 </head>
 <body>
@@ -1331,6 +1363,68 @@
             var p = getActiveProject(); return p ? p.name : '';
         }
 
+
+        // ═══════════════════════════════════════════════════════════════════
+        // PHOTO STORAGE — IndexedDB (no size limit, survives back navigation)
+        // ═══════════════════════════════════════════════════════════════════
+        var _photoDB = null;
+
+        function openPhotoDB() {
+            return new Promise(function(resolve) {
+                if (_photoDB) { resolve(_photoDB); return; }
+                var req = indexedDB.open('gscp_photos_v1', 1);
+                req.onupgradeneeded = function(e) {
+                    e.target.result.createObjectStore('photos');
+                };
+                req.onsuccess = function(e) { _photoDB = e.target.result; resolve(_photoDB); };
+                req.onerror   = function()  { resolve(null); };
+            });
+        }
+
+        function savePhotoIDB(key, dataUrl) {
+            openPhotoDB().then(function(db) {
+                if (!db) return;
+                try {
+                    var tx = db.transaction('photos', 'readwrite');
+                    tx.objectStore('photos').put(dataUrl, key);
+                } catch(e) {}
+            });
+        }
+
+        function loadPhotoIDB(key) {
+            return openPhotoDB().then(function(db) {
+                if (!db) return null;
+                return new Promise(function(resolve) {
+                    try {
+                        var tx  = db.transaction('photos', 'readonly');
+                        var req = tx.objectStore('photos').get(key);
+                        req.onsuccess = function() { resolve(req.result || null); };
+                        req.onerror   = function() { resolve(null); };
+                    } catch(e) { resolve(null); }
+                });
+            });
+        }
+
+        function deleteProjectPhotosIDB(projectId) {
+            openPhotoDB().then(function(db) {
+                if (!db) return;
+                try {
+                    var tx    = db.transaction('photos', 'readwrite');
+                    var store = tx.objectStore('photos');
+                    var req   = store.openCursor();
+                    req.onsuccess = function(e) {
+                        var cursor = e.target.result;
+                        if (!cursor) return;
+                        if (String(cursor.key).indexOf(projectId + '_') === 0) cursor.delete();
+                        cursor.continue();
+                    };
+                } catch(e) {}
+            });
+        }
+
+        // Open DB eagerly on load so it's ready when first photo is taken
+        openPhotoDB();
+
         const fieldParameters = {
             ph:          { name: 'pH',                       unit: 'pH units', step: '0.01',    icon: '🧪' },
             temp:        { name: 'Temperature',              unit: '°C',       step: '0.1',     icon: '🌡️' },
@@ -1356,7 +1450,8 @@
         }
 
         function fieldSaveNow() {
-            // Immediate save — no debounce. Called on page hide/visibility change.
+            // Photos are in IndexedDB (saved at capture time).
+            // localStorage only stores photo keys + all text/GPS/param data.
             try {
                 var data = collectAllFieldData();
                 var proj = getActiveProject();
@@ -1366,18 +1461,20 @@
                     proj.savedAt = new Date().toISOString();
                 }
                 fieldProjectsData.savedAt = new Date().toISOString();
+                // Store text data only — should always be well under localStorage limit
                 localStorage.setItem(FIELD_STORAGE_KEY, JSON.stringify(fieldProjectsData));
-                // Also write emergency copy to sessionStorage (survives back-navigation)
+                // Also write emergency copy to sessionStorage
                 if (proj) {
                     try { sessionStorage.setItem('gscp_emergency_backup', JSON.stringify(proj)); } catch(e) {}
                 }
-            } catch(e) {}
+            } catch(e) {
+                // If even text data fails (very unlikely), log it
+                console.warn('Field save error:', e);
+            }
         }
 
         function fieldAutoSave() {
-            // Also fire an immediate save right now (catches fast back-taps)
             fieldSaveNow();
-            // Then schedule a debounced save for indicator update
             clearTimeout(fieldAutoSaveTimer);
             fieldAutoSaveTimer = setTimeout(function() {
                 var indicator = document.getElementById('fieldSaveIndicator');
@@ -1385,7 +1482,7 @@
                     indicator.textContent = '\u2705 Auto-saved';
                     indicator.style.color = '#a9dfbf';
                     setTimeout(function() {
-                        indicator.textContent = '\U0001F4BE Session active';
+                        indicator.textContent = '\uD83D\uDCBE Session active';
                         indicator.style.color = 'rgba(255,255,255,0.8)';
                     }, 2500);
                 }
@@ -1420,15 +1517,14 @@
                     <select id="fieldProjSelector" onchange="switchFieldProject(this.value)" style="width: 100%; padding: 10px 12px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.25); background: rgba(0,0,0,0.25); color: white; font-size: 0.97rem; font-weight: 700; cursor: pointer; min-height: 44px;"></select>
                 </div>
 
-                <!-- SESSION RECOVERY BANNER -->
-                ${hasSavedData ? `
-                <div id="sessionRecoveryBanner" style="background: #fff8e1; border-left: 4px solid #f59f00; padding: 12px 15px; margin: 0 -30px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-                    <span style="font-size: 0.88rem; color: #7d5a00; font-weight: 600;">⚡ Saved sites found in this project — restore?</span>
+                <!-- SESSION RECOVERY BANNER (fallback only) -->
+                <div id="sessionRecoveryBanner" style="display:none; background: #fff8e1; border-left: 4px solid #f59f00; padding: 12px 15px; margin: 0 -30px; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 0.88rem; color: #7d5a00; font-weight: 600;">⚡ Saved sites found — restore?</span>
                     <div style="display: flex; gap: 8px;">
                         <button onclick="restoreFieldSession()" style="background: #2e7d32; color: white; border: none; padding: 7px 16px; border-radius: 8px; font-weight: 700; font-size: 0.85rem; cursor: pointer; min-height: 36px;">Restore</button>
                         <button onclick="dismissFieldRecovery()" style="background: #c62828; color: white; border: none; padding: 7px 14px; border-radius: 8px; font-weight: 700; font-size: 0.85rem; cursor: pointer; min-height: 36px;">Discard</button>
                     </div>
-                </div>` : ''}
+                </div>
 
                 <!-- ACTION BUTTONS -->
                 <div style="padding: 16px 15px 12px; background: #f4f6f8; border-bottom: 1px solid #dde2e8;">
@@ -1491,6 +1587,32 @@
             container.addEventListener('change', fieldAutoSave);
             updateFieldSiteCount();
             renderFieldProjectSelector();
+
+            // Auto-restore saved sites immediately
+            if (hasSavedData) {
+                var proj = getActiveProject();
+                if (proj && proj.sites && proj.sites.length) {
+                    var emptyState = document.getElementById('fieldEmptyState');
+                    if (emptyState) emptyState.remove();
+                    fieldSiteCounter = 0;
+                    proj.sites.forEach(function(siteData) {
+                        addFieldSite(siteData);
+                        var siteId = 'fsite_' + fieldSiteCounter;
+                        restoreSiteData(siteId, siteData);
+                        updateSiteHeader(siteId);
+                    });
+                    updateFieldSiteCount();
+                    var ind = document.getElementById('fieldSaveIndicator');
+                    if (ind) {
+                        ind.textContent = '\u2705 ' + proj.sites.length + ' site(s) restored';
+                        ind.style.color = '#a9dfbf';
+                        setTimeout(function() {
+                            ind.textContent = '\uD83D\uDCBE Session active';
+                            ind.style.color = 'rgba(255,255,255,0.8)';
+                        }, 4000);
+                    }
+                }
+            }
         }
 
         function renderFieldProjectSelector() {
@@ -1575,6 +1697,57 @@
                 siteCount: sites.length,
                 sites: sites
             }, 'GSCP_' + proj.name.replace(/[^a-zA-Z0-9]/g,'_') + '_' + date + '.json');
+        }
+
+        function restoreSiteData(siteId, siteData) {
+            (siteData.parameters || []).forEach(function(p) {
+                if (p.parameter === 'other') {
+                    addFieldParameter(siteId, 'other');
+                    var onEl  = document.getElementById(siteId + '_otherName');
+                    var ouEl  = document.getElementById(siteId + '_otherUnit');
+                    var ovEl  = document.getElementById(siteId + '_value_other');
+                    var onote = document.getElementById(siteId + '_note_other');
+                    if (onEl)  onEl.value  = p.name;
+                    if (ouEl)  ouEl.value  = p.unit;
+                    if (ovEl)  ovEl.value  = p.value;
+                    if (onote) onote.value = p.note;
+                } else {
+                    addFieldParameter(siteId, p.parameter);
+                    var vEl = document.getElementById(siteId + '_value_' + p.parameter);
+                    var nEl = document.getElementById(siteId + '_note_' + p.parameter);
+                    if (vEl) vEl.value = p.value;
+                    if (nEl) nEl.value = p.note;
+                }
+            });
+            var phCon = document.getElementById(siteId + '_photos');
+            if (!phCon) return;
+            (siteData.photos || []).forEach(function(photoRef) {
+                if (!photoRef) return;
+                var isDataUrl = photoRef.indexOf('data:') === 0 || photoRef.indexOf('blob:') === 0;
+                if (isDataUrl) {
+                    var div = document.createElement('div');
+                    div.setAttribute('data-photo-key', 'legacy_' + Date.now());
+                    div.style.cssText = 'position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1/1;background:#eee;';
+                    div.innerHTML = '<img src="' + photoRef + '" style="width:100%;height:100%;object-fit:cover;">';
+                    phCon.appendChild(div);
+                } else {
+                    (function(key, container) {
+                        loadPhotoIDB(key).then(function(src) {
+                            if (!src || !document.body.contains(container)) return;
+                            var div = document.createElement('div');
+                            div.id  = key;
+                            div.setAttribute('data-photo-key', key);
+                            div.style.cssText = 'position:relative;border-radius:8px;overflow:hidden;aspect-ratio:1/1;background:#eee;';
+                            div.innerHTML = '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;">'
+                                + '<button onclick="document.getElementById(\'' + key + '\').remove();fieldAutoSave();" '
+                                + 'style="position:absolute;top:4px;right:4px;background:rgba(220,53,69,0.92);'
+                                + 'color:white;border:none;border-radius:50%;width:24px;height:24px;'
+                                + 'cursor:pointer;font-size:0.85rem;font-weight:700;">\u2715</button>';
+                            container.appendChild(div);
+                        });
+                    })(photoRef, phCon);
+                }
+            });
         }
 
         function buildSiteCardHTML(siteId, siteNum, prefill) {
@@ -2037,14 +2210,19 @@
             files.forEach(function(file) {
                 if (!file.type.startsWith('image/')) return;
                 var reader  = new FileReader();
-                var photoId = siteId + '_ph_' + Date.now() + '_' + Math.random().toString(36).substr(2,4);
+                var proj    = getActiveProject();
+                var projId  = proj ? proj.id : 'default';
+                var photoKey = projId + '_' + siteId + '_ph_' + Date.now() + '_' + Math.random().toString(36).substr(2,4);
                 reader.onload = function(e) {
                     function addPhoto(src) {
+                        // Save full-res to IndexedDB (no size limit)
+                        savePhotoIDB(photoKey, src);
                         var item = document.createElement('div');
-                        item.id = photoId;
+                        item.id = photoKey;
+                        item.setAttribute('data-photo-key', photoKey);
                         item.style.cssText = 'position: relative; border-radius: 8px; overflow: hidden; aspect-ratio: 1 / 1; background: #eee;';
                         item.innerHTML = '<img src="' + src + '" style="width:100%; height:100%; object-fit:cover;">'
-                            + '<button onclick="document.getElementById(\'' + photoId + '\').remove(); fieldAutoSave();" style="position:absolute; top:4px; right:4px; background:rgba(220,53,69,0.92); color:white; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:0.85rem; font-weight:700;">✕</button>';
+                            + '<button onclick="document.getElementById(\'' + photoKey + '\').remove(); fieldAutoSave();" style="position:absolute; top:4px; right:4px; background:rgba(220,53,69,0.92); color:white; border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:0.85rem; font-weight:700;">✕</button>';
                         container.appendChild(item);
                         fieldAutoSave();
                     }
@@ -2222,7 +2400,15 @@
             }
 
             var photos = [];
-            document.querySelectorAll('#' + siteId + '_photos img').forEach(function(img) { photos.push(img.src); });
+            document.querySelectorAll('#' + siteId + '_photos [data-photo-key]').forEach(function(div) {
+                photos.push(div.getAttribute('data-photo-key'));
+            });
+            // Fallback: if old-style img.src stored (no data-photo-key), keep data URL
+            if (!photos.length) {
+                document.querySelectorAll('#' + siteId + '_photos img').forEach(function(img) {
+                    if (img.src && img.src.length > 10) photos.push(img.src);
+                });
+            }
 
             return {
                 siteId:      siteId,
@@ -3925,6 +4111,22 @@
         if (window.matchMedia('(display-mode: standalone)').matches) {
             deferredInstallPrompt = null;
         }
+
+    // ── Exit modal functions ────────────────────────────────────────
+    function showExitModal() {
+        var m = document.getElementById('exitModal');
+        if (m) m.classList.add('visible');
+    }
+    function stayInApp() {
+        var m = document.getElementById('exitModal');
+        if (m) m.classList.remove('visible');
+        armBackButtonTrap();
+    }
+    function confirmExit() {
+        var m = document.getElementById('exitModal');
+        if (m) m.classList.remove('visible');
+        history.back();
+    }
 
     // ── Service Worker (offline cache) ──────────────────────────
     if ('serviceWorker' in navigator) {
