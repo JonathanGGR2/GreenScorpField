@@ -1240,6 +1240,51 @@
             background: white; color: #888; font-size: 0.95rem; font-weight: 600; cursor: pointer;
         }
 
+
+        /* ── GreenScorp custom dialogs ──────────────────────────────── */
+        .gs-modal-backdrop {
+            display: none; position: fixed; inset: 0; z-index: 99998;
+            background: rgba(0,0,0,0.55); align-items: center; justify-content: center;
+        }
+        .gs-modal-backdrop.visible { display: flex; }
+        .gs-modal-card {
+            background: white; border-radius: 16px; padding: 0;
+            width: calc(100% - 40px); max-width: 360px;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+            overflow: hidden; animation: gsFadeIn 0.2s ease;
+        }
+        @keyframes gsFadeIn { from { opacity:0; transform:scale(0.94); } to { opacity:1; transform:scale(1); } }
+        .gs-modal-header {
+            background: linear-gradient(135deg, #1a3c2a, #2c5530);
+            color: white; padding: 14px 18px;
+            font-size: 0.88rem; font-weight: 700;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .gs-modal-body { padding: 18px 18px 8px; font-size: 0.92rem; color: #333; line-height: 1.5; }
+        .gs-modal-input {
+            width: 100%; margin-top: 12px; padding: 11px 13px;
+            border: 2px solid #dde2e8; border-radius: 9px;
+            font-size: 0.97rem; box-sizing: border-box; outline: none;
+        }
+        .gs-modal-input:focus { border-color: #2c5530; }
+        .gs-modal-btns {
+            display: flex; gap: 10px; padding: 14px 18px 18px;
+        }
+        .gs-modal-btn-yes {
+            flex: 1; padding: 13px; border: none; border-radius: 10px;
+            background: linear-gradient(135deg, #1a3c2a, #2c5530);
+            color: white; font-size: 0.95rem; font-weight: 700; cursor: pointer;
+        }
+        .gs-modal-btn-no {
+            flex: 1; padding: 13px; border: 2px solid #e0e0e0; border-radius: 10px;
+            background: white; color: #666; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+        }
+        .gs-modal-btn-danger {
+            flex: 1; padding: 13px; border: none; border-radius: 10px;
+            background: linear-gradient(135deg, #c0392b, #7b241c);
+            color: white; font-size: 0.95rem; font-weight: 700; cursor: pointer;
+        }
+
     </style>
 </head>
 <body>
@@ -1536,7 +1581,7 @@
                         display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px;">
                         ➕&nbsp; Add New Site
                     </button>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
                         <button onclick="exportCurrentProject()" style="
                             padding: 11px 6px; border: none; border-radius: 10px; font-size: 0.82rem;
                             font-weight: 700; cursor: pointer; color: white; min-height: 48px;
@@ -1558,19 +1603,28 @@
                             box-shadow: 0 3px 10px rgba(192,57,43,0.35);">
                             🗑️ Clear Sites
                         </button>
+                        <button onclick="showClearAllProjects()" style="
+                            padding: 11px 6px; border: none; border-radius: 10px; font-size: 0.82rem;
+                            font-weight: 700; cursor: pointer; color: white; min-height: 48px;
+                            background: linear-gradient(135deg, #4a235a, #7d3c98);
+                            box-shadow: 0 3px 10px rgba(74,35,90,0.35);">
+                            🗑️ All Projects
+                        </button>
                     </div>
                 </div>
 
                 <!-- QUICK GUIDE -->
                 <div style="margin: 12px 15px 0; background: white; border: 1px solid #dde2e8; border-radius: 12px; padding: 13px 15px; font-size: 0.84rem; color: #444; line-height: 1.6;">
                     <div style="font-weight: 700; color: #1a5276; margin-bottom: 7px; font-size: 0.88rem;">📋 How to use this tool</div>
-                    <div style="margin-bottom: 3px;">➕ <strong>Add New Site</strong> — creates a new data entry card for each sampling location.</div>
-                    <div style="margin-bottom: 3px;">📍 <strong>Get My Location</strong> — auto-captures your GPS coordinates. Allow location access when prompted.</div>
-                    <div style="margin-bottom: 3px;">📷 <strong>Camera / Gallery</strong> — photograph the site directly or attach existing images.</div>
-                    <div style="margin-bottom: 3px;">💾 <strong>Save This Site</strong> — downloads a JSON file for that site only. Tap this after completing each site before moving on — your per-site backup.</div>
-                    <div style="margin-bottom: 3px;">📥 <strong>Export All</strong> — downloads one file containing all sites collected in this session. Use this at the end of the field day.</div>
-                    <div style="margin-bottom: 3px;">⚡ <strong>Auto-save</strong> — your data is automatically saved to this device in the background. If you close the browser, your session can be restored on next open.</div>
-                    <div>🗑️ <strong>Clear All</strong> — permanently deletes all sites and the saved session. Only use this once data is safely downloaded.</div>
+                    <div style="margin-bottom: 3px;">🌿 <strong>Projects</strong> — use the project bar to create and switch between investigations. Each project holds its own set of sites. Tap <strong>+ New Project</strong> to start a new investigation.</div>
+                    <div style="margin-bottom: 3px;">➕ <strong>Add New Site</strong> — creates a new data entry card for each sampling location within the active project.</div>
+                    <div style="margin-bottom: 3px;">📍 <strong>Get My Location</strong> — watches for GPS signal for up to 30 seconds and accepts the best fix. Accepts immediately if accuracy is ≤4 m. Tap <strong>Use now</strong> to accept early.</div>
+                    <div style="margin-bottom: 3px;">📷 <strong>Camera + Watermark</strong> — photographs the site and bakes in the Green Scorpions watermark (site name, GPS, date, project). <strong>Camera No Watermark</strong> — photographs without overlay. <strong>Gallery</strong> — attach existing photos from your device.</div>
+                    <div style="margin-bottom: 3px;">💾 <strong>Save This Site</strong> — downloads a JSON backup for that site only. Use after completing each site as your per-site insurance.</div>
+                    <div style="margin-bottom: 3px;">📥 <strong>This Project</strong> — downloads a JSON of the active project only. <strong>All Projects</strong> — downloads every project in one file. Use at the end of the field day.</div>
+                    <div style="margin-bottom: 3px;">⚡ <strong>Auto-save</strong> — text data and GPS are saved to this device continuously. Photos are stored in the browser's IndexedDB (no size limit). If you leave the app, your sites and photos will be restored automatically on next open.</div>
+                    <div style="margin-bottom: 3px;">↩ <strong>Back button</strong> — pressing back once saves all data immediately and shows a confirmation prompt. Tap <strong>Stay in App</strong> to continue or <strong>Exit</strong> to leave.</div>
+                    <div>🗑️ <strong>Clear Sites</strong> — removes all sites in the current project only. <strong>All Projects</strong> — permanently erases every project, site and photo on this device. Both require double confirmation and cannot be undone.</div>
                 </div>
 
                 <!-- SITES CONTAINER -->
@@ -1629,8 +1683,19 @@
         }
 
         function addFieldProject() {
-            var name = prompt('New project name:', '');
-            if (!name || !name.trim()) return;
+            // Show custom modal instead of browser prompt
+            var inp = document.getElementById('newProjInput');
+            if (inp) inp.value = '';
+            document.getElementById('newProjModal').classList.add('visible');
+            if (inp) setTimeout(function(){ inp.focus(); }, 200);
+        }
+        function newProjCancel() {
+            document.getElementById('newProjModal').classList.remove('visible');
+        }
+        function newProjConfirm() {
+            var name = (document.getElementById('newProjInput').value || '').trim();
+            if (!name) { document.getElementById('newProjInput').focus(); return; }
+            document.getElementById('newProjModal').classList.remove('visible');
             // Save current project before switching
             var cur = getActiveProject();
             if (cur) {
@@ -1978,7 +2043,7 @@
             var btn  = document.getElementById(siteId + '_gpsBtn');
             var acc  = document.getElementById(siteId + '_gpsAccuracy');
             var INSTANT_M = 4;     // accept immediately if accuracy <= this
-            var WINDOW_MS = 20000; // total watch window in ms
+            var WINDOW_MS = 30000; // total watch window in ms
 
             if (!navigator.geolocation) {
                 acc.textContent = '❌ Geolocation not supported by this browser.';
@@ -2097,7 +2162,7 @@
                             btn.textContent   = '📍 Get My Location';
                             btn.disabled      = false;
                             btn.style.opacity = '1';
-                            acc.textContent   = '❌ No GPS fix after 20 s. Move to an open area and try again.';
+                            acc.textContent   = '❌ No GPS fix after 30 s. Move to an open area and try again.';
                             acc.style.color   = '#c0392b';
                         }
                     }
@@ -2490,8 +2555,17 @@
 
         function clearAllFieldData() {
             var proj = getActiveProject();
-            var pname = proj ? '"' + proj.name + '"' : 'this project';
-            if (!confirm('Clear all sites in ' + pname + '? This cannot be undone.')) return;
+            var msg  = document.getElementById('clearSitesMsg');
+            if (msg) msg.innerHTML = 'Are you sure you want to clear all sites in <strong>"'
+                + (proj ? proj.name : 'this project') + '"</strong>? This cannot be undone.';
+            document.getElementById('clearSitesModal').classList.add('visible');
+        }
+        function closeClearSitesModal() {
+            document.getElementById('clearSitesModal').classList.remove('visible');
+        }
+        function clearSitesConfirm() {
+            document.getElementById('clearSitesModal').classList.remove('visible');
+            var proj = getActiveProject();
             if (proj) { proj.sites = []; proj.counter = 0; proj.savedAt = new Date().toISOString(); }
             localStorage.setItem(FIELD_STORAGE_KEY, JSON.stringify(fieldProjectsData));
             fieldSiteCounter = 0;
@@ -2549,10 +2623,9 @@
             }
         }
         function dismissFieldRecovery() {
-            if (!confirm('Discard the saved session? Previously collected data will be lost.')) return;
-            localStorage.removeItem(FIELD_STORAGE_KEY);
+            // Just hide the banner — auto-restore already ran, nothing to discard
             var banner = document.getElementById('sessionRecoveryBanner');
-            if (banner) banner.remove();
+            if (banner) banner.style.display = 'none';
         }
 
 
@@ -4128,6 +4201,44 @@
         history.back();
     }
 
+    // ── Clear All Projects functions ─────────────────────────────────
+    function showClearAllProjects() {
+        document.getElementById('clearAllProjModal1').classList.add('visible');
+    }
+    function clearAllProjStep2() {
+        document.getElementById('clearAllProjModal1').classList.remove('visible');
+        document.getElementById('clearAllProjModal2').classList.add('visible');
+    }
+    function clearAllProjectsExecute() {
+        document.getElementById('clearAllProjModal2').classList.remove('visible');
+        // Wipe all projects from localStorage
+        var pid = 'proj_' + Date.now();
+        fieldProjectsData = {
+            projects: [{ id: pid, name: 'Default Project',
+                created: new Date().toISOString().slice(0,10),
+                counter: 0, sites: [], savedAt: null }],
+            activeProjectId: pid
+        };
+        localStorage.setItem(FIELD_STORAGE_KEY, JSON.stringify(fieldProjectsData));
+        sessionStorage.removeItem('gscp_emergency_backup');
+        // Wipe IndexedDB photos
+        openPhotoDB().then(function(db) {
+            if (!db) return;
+            try {
+                var tx = db.transaction('photos', 'readwrite');
+                tx.objectStore('photos').clear();
+            } catch(e) {}
+        });
+        // Reset UI
+        fieldSiteCounter = 0;
+        var sc = document.getElementById('fieldSitesContainer');
+        if (sc) sc.innerHTML = '<div id="fieldEmptyState" style="text-align:center;padding:50px 20px;color:#aaa;"><div style="font-size:3.2rem;margin-bottom:14px;">🗺️</div><h3 style="font-size:1.1rem;color:#888;margin-bottom:6px;">No sites yet</h3><p style="font-size:0.88rem;">Tap <strong>Add New Site</strong> to begin</p></div>';
+        updateFieldSiteCount();
+        renderFieldProjectSelector();
+        var ind = document.getElementById('fieldSaveIndicator');
+        if (ind) { ind.textContent = '\u2705 All data cleared'; ind.style.color = '#a9dfbf'; }
+    }
+
     // ── Service Worker (offline cache) ──────────────────────────
     if ('serviceWorker' in navigator) {
         var swCode = [
@@ -4145,5 +4256,59 @@
         navigator.serviceWorker.register(URL.createObjectURL(swBlob)).catch(function(){});
     }
 </script>
+
+<!-- ══ GreenScorp Custom Dialogs ═══════════════════════════════════ -->
+
+<!-- New Project dialog -->
+<div class="gs-modal-backdrop" id="newProjModal">
+  <div class="gs-modal-card">
+    <div class="gs-modal-header">🌿 GreenScorp &nbsp;·&nbsp; New Project</div>
+    <div class="gs-modal-body">
+      Enter a name for the new project:
+      <input class="gs-modal-input" id="newProjInput" type="text" maxlength="60" placeholder="e.g. Lions Road Investigation">
+    </div>
+    <div class="gs-modal-btns">
+      <button class="gs-modal-btn-yes" onclick="newProjConfirm()">Create Project</button>
+      <button class="gs-modal-btn-no"  onclick="newProjCancel()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clear current project sites dialog -->
+<div class="gs-modal-backdrop" id="clearSitesModal">
+  <div class="gs-modal-card">
+    <div class="gs-modal-header">🌿 GreenScorp &nbsp;·&nbsp; Clear Sites</div>
+    <div class="gs-modal-body" id="clearSitesMsg">Are you sure you want to clear all sites in this project? This cannot be undone.</div>
+    <div class="gs-modal-btns">
+      <button class="gs-modal-btn-danger" id="clearSitesYesBtn" onclick="clearSitesConfirm()">Yes, Clear Sites</button>
+      <button class="gs-modal-btn-no" onclick="closeClearSitesModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clear ALL projects dialog — step 1 -->
+<div class="gs-modal-backdrop" id="clearAllProjModal1">
+  <div class="gs-modal-card">
+    <div class="gs-modal-header">🌿 GreenScorp &nbsp;·&nbsp; Clear All Projects</div>
+    <div class="gs-modal-body">⚠️ This will permanently delete <strong>all projects and all sites</strong> stored on this device.<br><br>Are you sure you want to continue?</div>
+    <div class="gs-modal-btns">
+      <button class="gs-modal-btn-danger" onclick="clearAllProjStep2()">Yes, proceed</button>
+      <button class="gs-modal-btn-no" onclick="document.getElementById('clearAllProjModal1').classList.remove('visible')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clear ALL projects dialog — step 2 confirm -->
+<div class="gs-modal-backdrop" id="clearAllProjModal2">
+  <div class="gs-modal-card">
+    <div class="gs-modal-header">🌿 GreenScorp &nbsp;·&nbsp; Final Confirmation</div>
+    <div class="gs-modal-body">This action <strong>cannot be undone</strong>. All projects, sites, photos and GPS data stored on this device will be erased.<br><br>Tap <strong>Confirm — Delete Everything</strong> to proceed.</div>
+    <div class="gs-modal-btns">
+      <button class="gs-modal-btn-danger" onclick="clearAllProjectsExecute()">Confirm — Delete Everything</button>
+      <button class="gs-modal-btn-no" onclick="document.getElementById('clearAllProjModal2').classList.remove('visible')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
