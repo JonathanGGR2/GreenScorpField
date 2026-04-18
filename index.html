@@ -1117,6 +1117,50 @@
         html, body { height: 100%; margin: 0; padding: 0; overflow-x: hidden; }
         body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); background: #f0f4f8; }
 
+        /* Install prompt */
+        #installPrompt {
+            display: none;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            z-index: 9999;
+            padding: 0 0 env(safe-area-inset-bottom);
+            animation: slideUp 0.35s ease;
+        }
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to   { transform: translateY(0);    opacity: 1; }
+        }
+        .install-card {
+            background: white;
+            border-radius: 20px 20px 0 0;
+            padding: 22px 24px 28px;
+            box-shadow: 0 -6px 32px rgba(0,0,0,0.22);
+        }
+        .install-card-header {
+            display: flex; align-items: center; gap: 14px; margin-bottom: 14px;
+        }
+        .install-card-logo {
+            width: 56px; height: 56px; border-radius: 12px;
+            object-fit: contain; background: #1a3c2a; padding: 6px;
+            flex-shrink: 0;
+        }
+        .install-card-title { font-size: 1.05rem; font-weight: 700; color: #1a3c2a; margin: 0 0 3px; }
+        .install-card-sub   { font-size: 0.8rem; color: #666; margin: 0; }
+        .install-card-body  { font-size: 0.85rem; color: #444; margin-bottom: 18px; line-height: 1.55; }
+        .install-btn-row    { display: flex; gap: 10px; }
+        .install-btn-yes {
+            flex: 2; padding: 14px; border: none; border-radius: 11px;
+            background: linear-gradient(135deg, #1a3c2a, #2c5530);
+            color: white; font-size: 0.97rem; font-weight: 700; cursor: pointer;
+        }
+        .install-btn-no {
+            flex: 1; padding: 14px; border: 2px solid #ddd; border-radius: 11px;
+            background: white; color: #888; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+        }
+        .install-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9998;
+        }
+
         /* Cover screen */
         #coverScreen {
             position: fixed; inset: 0; z-index: 999;
@@ -3827,6 +3871,45 @@
         loadFieldTool();
         loadReviewTool();
     });
+
+    // ── Install prompt logic ────────────────────────────────────────
+        var deferredInstallPrompt = null;
+
+        window.addEventListener('beforeinstallprompt', function(e) {
+            e.preventDefault();
+            deferredInstallPrompt = e;
+            setTimeout(showInstallPrompt, 1800);
+        });
+
+        function showInstallPrompt() {
+            var prompt   = document.getElementById('installPrompt');
+            var backdrop = document.getElementById('installBackdrop');
+            if (prompt)   prompt.style.display   = 'block';
+            if (backdrop) backdrop.style.display = 'block';
+        }
+
+        function dismissInstall() {
+            var prompt   = document.getElementById('installPrompt');
+            var backdrop = document.getElementById('installBackdrop');
+            if (prompt)   prompt.style.display   = 'none';
+            if (backdrop) backdrop.style.display = 'none';
+        }
+
+        function doInstall() {
+            dismissInstall();
+            if (deferredInstallPrompt) {
+                deferredInstallPrompt.prompt();
+                deferredInstallPrompt.userChoice.then(function(result) {
+                    deferredInstallPrompt = null;
+                });
+            } else {
+                alert('To install: tap the Chrome menu then "Add to Home Screen".');
+            }
+        }
+
+        if (window.matchMedia('(display-mode: standalone)').matches) {
+            deferredInstallPrompt = null;
+        }
 
     // ── Service Worker (offline cache) ──────────────────────────
     if ('serviceWorker' in navigator) {
