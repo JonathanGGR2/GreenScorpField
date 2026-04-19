@@ -1285,6 +1285,23 @@
             color: white; font-size: 0.95rem; font-weight: 700; cursor: pointer;
         }
 
+
+        /* -- Sketch pad -- */
+        .sketch-wrap{background:linear-gradient(135deg,#f0f7ee,#e8f5e4);border:1px solid #a9dfbf;border-radius:12px;padding:13px 13px 10px;margin-bottom:14px;}
+        .sketch-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+        .sketch-title{font-weight:700;color:#1a3c2a;font-size:0.95rem;}
+        .sketch-toggle{background:none;border:1px solid #a9dfbf;border-radius:7px;padding:4px 11px;font-size:0.8rem;color:#1a3c2a;font-weight:700;cursor:pointer;}
+        .sketch-toolbar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}
+        .sketch-tool-btn{padding:6px 10px;border:2px solid #dde2e8;border-radius:8px;background:white;font-size:0.78rem;font-weight:700;cursor:pointer;color:#2c3e50;white-space:nowrap;min-height:34px;}
+        .sketch-tool-btn.active{border-color:#1a3c2a;background:#1a3c2a;color:white;}
+        .sketch-color-btn{width:26px;height:26px;border-radius:50%;border:3px solid transparent;cursor:pointer;flex-shrink:0;}
+        .sketch-color-btn.active{border-color:#1a3c2a;}
+        .sketch-size-select{padding:5px 8px;border:2px solid #dde2e8;border-radius:7px;font-size:0.78rem;background:white;cursor:pointer;}
+        .sketch-canvas{width:100%;border-radius:8px;border:1px solid #c8e6c9;background:white;touch-action:none;display:block;cursor:crosshair;}
+        .sketch-canvas-label{font-size:0.72rem;color:#888;text-align:center;margin-top:4px;display:block;}
+        .sketch-action-row{display:flex;gap:8px;margin-top:8px;}
+        .sketch-action-btn{flex:1;padding:8px;border:none;border-radius:8px;font-size:0.82rem;font-weight:700;cursor:pointer;color:white;}
+
     </style>
 </head>
 <body>
@@ -1361,6 +1378,7 @@
         const FIELD_STORAGE_KEY_V3 = 'gscp_field_v3'; // legacy migration
         var fieldSiteCounter  = 0;
         var fieldAutoSaveTimer = null;
+        var _restoring = false; // blocks saves during restore
         var fieldProjectsData  = null; // initialised below
 
         // ── Project data initialisation ─────────────────────────────────────
@@ -1445,14 +1463,17 @@
 
         function loadPhotoIDB(key) {
             return openPhotoDB().then(function(db) {
-                if (!db) return null;
+                if (!db) return loadPhotoThumb(key); // IDB unavailable, use thumbnail
                 return new Promise(function(resolve) {
                     try {
                         var tx  = db.transaction('photos', 'readonly');
                         var req = tx.objectStore('photos').get(key);
-                        req.onsuccess = function() { resolve(req.result || null); };
-                        req.onerror   = function() { resolve(null); };
-                    } catch(e) { resolve(null); }
+                        req.onsuccess = function() {
+                            // Full quality from IDB, or fall back to thumbnail
+                            resolve(req.result || loadPhotoThumb(key));
+                        };
+                        req.onerror = function() { resolve(loadPhotoThumb(key)); };
+                    } catch(e) { resolve(loadPhotoThumb(key)); }
                 });
             });
         }
@@ -1502,8 +1523,8 @@
         }
 
         function fieldSaveNow() {
-            // Photos are in IndexedDB (saved at capture time).
-            // localStorage only stores photo keys + all text/GPS/param data.
+            if (_restoring) return; // never overwrite during restore
+            // Photos stored in IndexedDB; localStorage stores keys + text data.
             try {
                 var data = collectAllFieldData();
                 var proj = getActiveProject();
@@ -1567,6 +1588,7 @@
                         <button onclick="addFieldProject()" style="padding: 5px 13px; background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.3); color: white; border-radius: 8px; font-size: 0.8rem; font-weight: 700; cursor: pointer; min-height: 32px;">+ New Project</button>
                     </div>
                     <select id="fieldProjSelector" onchange="switchFieldProject(this.value)" style="width: 100%; padding: 10px 12px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.25); background: rgba(0,0,0,0.25); color: white; font-size: 0.97rem; font-weight: 700; cursor: pointer; min-height: 44px;"></select>
+                    <button onclick="openProjectSketch()" style="width:100%;margin-top:8px;padding:10px;border:1px solid rgba(255,255,255,0.3);background:rgba(255,255,255,0.10);color:white;border-radius:10px;font-size:0.88rem;font-weight:700;cursor:pointer;min-height:40px;">✏️ Project Sketch / Site Overview Map</button>
                 </div>
 
                 <!-- SESSION RECOVERY BANNER (fallback only) -->
@@ -1649,10 +1671,11 @@
             updateFieldSiteCount();
             renderFieldProjectSelector();
 
-            // Auto-restore saved sites immediately
+            // // Auto-restore saved sites immediately — no tap required
             if (hasSavedData) {
                 var proj = getActiveProject();
                 if (proj && proj.sites && proj.sites.length) {
+                    _restoring = true; // block saves until all params+values in DOM
                     var emptyState = document.getElementById('fieldEmptyState');
                     if (emptyState) emptyState.remove();
                     fieldSiteCounter = 0;
@@ -1662,6 +1685,8 @@
                         restoreSiteData(siteId, siteData);
                         updateSiteHeader(siteId);
                     });
+                    _restoring = false;
+                    fieldSaveNow(); // one clean save — all params+values now in DOM
                     updateFieldSiteCount();
                     var ind = document.getElementById('fieldSaveIndicator');
                     if (ind) {
@@ -1743,6 +1768,7 @@
             if (container) container.innerHTML = '<div id="fieldEmptyState" style="text-align:center;padding:50px 20px;color:#aaa;"><div style="font-size:3.2rem;margin-bottom:14px;">🗺️</div><h3 style="font-size:1.1rem;color:#888;margin-bottom:6px;">No sites yet</h3><p style="font-size:0.88rem;">Tap <strong>Add New Site</strong> to begin collecting field data</p></div>';
             fieldSiteCounter = 0;
             if (newProj && newProj.sites && newProj.sites.length) {
+                _restoring = true;
                 var emptyState = document.getElementById('fieldEmptyState');
                 if (emptyState) emptyState.remove();
                 newProj.sites.forEach(function(siteData) {
@@ -1750,6 +1776,8 @@
                     var siteId = 'fsite_' + fieldSiteCounter;
                     restoreSiteData(siteId, siteData);
                 });
+                _restoring = false;
+                fieldSaveNow();
             }
             updateFieldSiteCount();
             renderFieldProjectSelector();
@@ -1791,6 +1819,16 @@
                     if (nEl) nEl.value = p.note;
                 }
             });
+            if (siteData.sketch) {
+                if (!_sketches[siteId]) _sketches[siteId] = { history:[], current:null, drawing:false, tool:'pen', colour:'#222', size:4 };
+                _sketches[siteId].saved = siteData.sketch;
+                var skImg = document.getElementById(siteId + '_sketchImg');
+                var skPr  = document.getElementById(siteId + '_sketchPreview');
+                var skTog = document.getElementById(siteId + '_sketchToggle');
+                if (skImg) skImg.src = siteData.sketch;
+                if (skPr)  skPr.style.display  = 'block';
+                if (skTog) skTog.textContent = 'Edit Sketch';
+            }
             var phCon = document.getElementById(siteId + '_photos');
             if (!phCon) return;
             (siteData.photos || []).forEach(function(photoRef, idx) {
@@ -1842,7 +1880,59 @@
             });
         }
 
-        function buildSiteCardHTML(siteId, siteNum, prefill) {
+        function buildSketchHTML(siteId) {
+            var h = '';
+            h += '<div class="sketch-wrap" id="' + siteId + '_sketchWrap">';
+            h += '<div class="sketch-header">';
+            h += '<span class="sketch-title">&#x270F;&#xFE0F; Site Sketch / Diagram</span>';
+            h += '<button class="sketch-toggle" onclick="toggleSketch(\'' + siteId + '\')" id="' + siteId + '_sketchToggle">Open Sketch Pad</button>';
+            h += '</div>';
+            h += '<div id="' + siteId + '_sketchBody" style="display:none;">';
+            h += '<div class="sketch-toolbar">';
+            h += '<button class="sketch-tool-btn active" id="' + siteId + '_tool_pen"    onclick="setSketchTool(\'' + siteId + '\',\'pen\')">&#x270F; Pen</button>';
+            h += '<button class="sketch-tool-btn"        id="' + siteId + '_tool_line"   onclick="setSketchTool(\'' + siteId + '\',\'line\')">&#x2014; Line</button>';
+            h += '<button class="sketch-tool-btn"        id="' + siteId + '_tool_arrow"  onclick="setSketchTool(\'' + siteId + '\',\'arrow\')">&#x2192; Arrow</button>';
+            h += '<button class="sketch-tool-btn"        id="' + siteId + '_tool_circle" onclick="setSketchTool(\'' + siteId + '\',\'circle\')">&#x25CB; Circle</button>';
+            h += '<button class="sketch-tool-btn"        id="' + siteId + '_tool_rect"   onclick="setSketchTool(\'' + siteId + '\',\'rect\')">&#x25A1; Rect</button>';
+            h += '<button class="sketch-tool-btn"        id="' + siteId + '_tool_text"   onclick="setSketchTool(\'' + siteId + '\',\'text\')">T Text</button>';
+            h += '<button class="sketch-tool-btn"        id="' + siteId + '_tool_eraser" onclick="setSketchTool(\'' + siteId + '\',\'eraser\')">&#x232B; Eraser</button>';
+            h += '</div>';
+            h += '<div class="sketch-toolbar">';
+            h += '<span style="font-size:0.75rem;color:#555;font-weight:700;">Colour:</span>';
+            h += '<button class="sketch-color-btn active" id="' + siteId + '_col_black"  data-sid="' + siteId + '" data-col="#222"    style="background:#222;"    onclick="setSketchColour(this.dataset.sid,this.dataset.col)"></button>';
+            h += '<button class="sketch-color-btn"        id="' + siteId + '_col_blue"   data-sid="' + siteId + '" data-col="#1a5276" style="background:#1a5276;" onclick="setSketchColour(this.dataset.sid,this.dataset.col)"></button>';
+            h += '<button class="sketch-color-btn"        id="' + siteId + '_col_red"    data-sid="' + siteId + '" data-col="#c0392b" style="background:#c0392b;" onclick="setSketchColour(this.dataset.sid,this.dataset.col)"></button>';
+            h += '<button class="sketch-color-btn"        id="' + siteId + '_col_green"  data-sid="' + siteId + '" data-col="#1a3c2a" style="background:#1a3c2a;" onclick="setSketchColour(this.dataset.sid,this.dataset.col)"></button>';
+            h += '<button class="sketch-color-btn"        id="' + siteId + '_col_orange" data-sid="' + siteId + '" data-col="#d35400" style="background:#d35400;" onclick="setSketchColour(this.dataset.sid,this.dataset.col)"></button>';
+            h += '<span style="font-size:0.75rem;color:#555;font-weight:700;margin-left:6px;">Size:</span>';
+            h += '<select class="sketch-size-select" id="' + siteId + '_sketchSize" data-sid="' + siteId + '" onchange="setSketchSize(this.dataset.sid,this.value)">';
+            h += '<option value="2">Thin</option>';
+            h += '<option value="4" selected>Normal</option>';
+            h += '<option value="8">Thick</option>';
+            h += '<option value="18">Eraser</option>';
+            h += '</select>';
+            h += '</div>';
+            h += '<canvas class="sketch-canvas" id="' + siteId + '_canvas" height="280"></canvas>';
+            h += '<span class="sketch-canvas-label">Draw with finger. Mark flow direction, discharge point, sample location</span>';
+            h += '<div class="sketch-action-row">';
+            h += '<button class="sketch-action-btn" style="background:#e67e22;" onclick="sketchUndo(\'' + siteId + '\')">&#x21A9; Undo</button>';
+            h += '<button class="sketch-action-btn" style="background:#7d3c98;" onclick="sketchAddText(\'' + siteId + '\')">T+ Label</button>';
+            h += '<button class="sketch-action-btn" style="background:#2471a3;" onclick="sketchSave(\'' + siteId + '\')">&#x1F4BE; Save</button>';
+            h += '<button class="sketch-action-btn" style="background:#c0392b;" onclick="sketchClear(\'' + siteId + '\')">&#x2715; Clear</button>';
+            h += '</div>';
+            h += '</div>';
+            h += '<div id="' + siteId + '_sketchPreview" style="display:none;margin-top:8px;">';
+            h += '<img id="' + siteId + '_sketchImg" style="width:100%;border-radius:8px;border:1px solid #c8e6c9;" />';
+            h += '<div style="display:flex;gap:8px;margin-top:6px;">';
+            h += '<button class="sketch-action-btn" style="background:#1a3c2a;flex:2;" onclick="editSketch(\'' + siteId + '\')">&#x270F;&#xFE0F; Edit</button>';
+            h += '<button class="sketch-action-btn" style="background:#c0392b;flex:1;" onclick="deleteSketch(\'' + siteId + '\')">&#x2715; Delete</button>';
+            h += '</div>';
+            h += '</div>';
+            h += '</div>';
+            return h;
+        }
+
+                function buildSiteCardHTML(siteId, siteNum, prefill) {
             const dt    = prefill && prefill.datetime   ? prefill.datetime   : getFieldDateTime();
             const name  = prefill && prefill.siteName   ? prefill.siteName   : '';
             const notes = prefill && prefill.fieldNotes ? prefill.fieldNotes : '';
@@ -2003,6 +2093,7 @@
                         </div>\
                         <div id="' + siteId + '_photos" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;"></div>\
                     </div>\
+                    \'\n' + buildSketchHTML(siteId) + '\n\
                     <!-- SITE ACTIONS -->\
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">\
                         <button onclick="saveSingleSite(\'' + siteId + '\')" style="\
@@ -2296,6 +2387,26 @@
         var gsLogoImg = null;
         (function() { gsLogoImg = new Image(); gsLogoImg.src = GSCP_LOGO_B64; })();
 
+        // ── Photo thumbnail backup in localStorage (35-50KB each, reliable) ──
+        function savePhotoThumb(key, src) {
+            var img = new Image();
+            img.onload = function() {
+                var s = Math.min(1, 600 / Math.max(img.width, img.height));
+                var c = document.createElement('canvas');
+                c.width  = Math.round(img.width  * s);
+                c.height = Math.round(img.height * s);
+                c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+                try { localStorage.setItem('gscp_ph_' + key, c.toDataURL('image/jpeg', 0.40)); } catch(e) {}
+            };
+            img.src = src;
+        }
+        function loadPhotoThumb(key) {
+            return localStorage.getItem('gscp_ph_' + key) || null;
+        }
+        function removePhotoThumb(key) {
+            try { localStorage.removeItem('gscp_ph_' + key); } catch(e) {}
+        }
+
         function handleFieldPhotos(siteId, event, applyWatermark) {
             var files     = Array.prototype.slice.call(event.target.files);
             var container = document.getElementById(siteId + '_photos');
@@ -2321,20 +2432,25 @@
                         container.appendChild(item);
 
                         // Step 2 — await confirmed IDB write (tx.oncomplete = durably on disk)
+                        // Save thumbnail to localStorage NOW (synchronous, guaranteed)
+                        savePhotoThumb(photoKey, src);
+                        // Also await IDB for full-quality version
                         savePhotoIDB(photoKey, src)
                             .then(function() {
-                                // Write confirmed — safe to store key in localStorage
                                 item.setAttribute('data-photo-key', photoKey);
                                 var sv = document.getElementById(photoKey + '_sv');
                                 if (sv) sv.remove();
-                                fieldAutoSave(); // saves tiny key string, not photo data
+                                fieldAutoSave();
                             })
                             .catch(function() {
-                                // IDB failed — store data URL directly as last resort
+                                // IDB failed — thumbnail in localStorage is the backup
                                 item.setAttribute('data-photo-key', photoKey);
-                                item.setAttribute('data-photo-url', src);
                                 var sv = document.getElementById(photoKey + '_sv');
-                                if (sv) sv.textContent = '⚠ Save issue';
+                                if (sv) sv.textContent = '⚠ IDB failed, thumb saved';
+                                setTimeout(function() {
+                                    var sv2 = document.getElementById(photoKey + '_sv');
+                                    if (sv2) sv2.remove();
+                                }, 3000);
                                 fieldAutoSave();
                             });
                     }
@@ -2517,6 +2633,7 @@
                 photos.push(fallback ? fallback : div.getAttribute('data-photo-key'));
             });
 
+            var sketch = (_sketches[siteId] && _sketches[siteId].saved) ? _sketches[siteId].saved : null;
             return {
                 siteId:      siteId,
                 siteNumber:  parseInt(num) || 0,
@@ -2527,6 +2644,7 @@
                 fieldNotes:  notes,
                 parameters:  parameters,
                 photos:      photos,
+                sketch:      sketch,
                 savedAt:     new Date().toISOString()
             };
         }
@@ -2636,6 +2754,7 @@
 
             try {
                 var sites = proj.sites;
+                _restoring = true;
                 fieldSiteCounter = 0;
                 var emptyState = document.getElementById('fieldEmptyState');
                 if (emptyState) emptyState.remove();
@@ -2646,6 +2765,8 @@
                     restoreSiteData(siteId, siteData);
                     updateSiteHeader(siteId);
                 });
+                _restoring = false;
+                fieldSaveNow();
 
                 updateFieldSiteCount();
                 renderFieldProjectSelector();
@@ -2705,6 +2826,16 @@
                 + '<div id="reviewUploadStatus" style="margin-top:10px;font-size:0.87rem;color:#555;min-height:18px;"></div>'
                 + '</div>'
 
+                // ── Bulk upload box ─────────────────────────────────────────
+                + '<div style="background:#f4f6f8;border:2px dashed #a9dfbf;border-radius:14px;padding:22px 28px;text-align:center;margin-top:14px;">'
+                + '<div style="font-size:2.2rem;margin-bottom:8px;">📦</div>'
+                + '<p style="font-weight:700;color:#1a3c2a;font-size:1rem;margin-bottom:4px;">Bulk Upload Site JSON Files</p>'
+                + '<p style="font-size:0.83rem;color:#777;margin-bottom:14px;">Select multiple single-site JSON files from the same project — the tool will merge them, verify they share a project, and process everything together</p>'
+                + '<input type="file" id="bulkFileInput" accept=".json" multiple onchange="handleBulkUpload(event)" style="display:none;">'
+                + '<button onclick="document.getElementById(\'bulkFileInput\').click()" style="padding:11px 26px;background:linear-gradient(135deg,#1a5276,#2471a3);color:white;border:none;border-radius:10px;font-size:0.97rem;font-weight:700;cursor:pointer;">Choose Multiple JSON Files</button>'
+                + '<div id="bulkUploadStatus" style="margin-top:10px;font-size:0.87rem;color:#555;min-height:18px;"></div>'
+                + '</div>'
+
                 // ── Content shown after upload ──────────────────────────────
                 + '<div id="reviewContent" style="display:none;">'
 
@@ -2754,6 +2885,121 @@
                 }
             };
             reader.readAsText(file);
+        }
+
+        function handleBulkUpload(event) {
+            var files = Array.prototype.slice.call(event.target.files);
+            if (!files.length) return;
+
+            var statusEl = document.getElementById('bulkUploadStatus');
+            statusEl.innerHTML = '<span style="color:#2471a3;">&#9203; Reading ' + files.length + ' file(s)&hellip;</span>';
+
+            var promises = files.map(function(file) {
+                return new Promise(function(resolve, reject) {
+                    var r = new FileReader();
+                    r.onload = function(e) {
+                        try {
+                            var data = JSON.parse(e.target.result);
+                            resolve({ name: file.name, data: data });
+                        } catch(err) {
+                            reject(file.name + ': invalid JSON');
+                        }
+                    };
+                    r.onerror = function() { reject(file.name + ': read error'); };
+                    r.readAsText(file);
+                });
+            });
+
+            Promise.all(promises).then(function(results) {
+                var allSites   = [];
+                var projects   = {};
+                var errors     = [];
+                var exportedBy = '';
+                var exportDate = new Date().toISOString();
+
+                results.forEach(function(res) {
+                    var d = res.data;
+
+                    // Support single-site exports { sites: [...] }
+                    // and multi-site exports { sites: [...] }
+                    var sites = d.sites || [];
+                    if (!sites.length) {
+                        errors.push(res.name + ': no sites found');
+                        return;
+                    }
+
+                    // Determine project name — from top-level field or first site
+                    var projName = d.projectName
+                        || (sites[0] && sites[0].projectName)
+                        || 'Unknown Project';
+
+                    if (!projects[projName]) projects[projName] = 0;
+                    projects[projName] += sites.length;
+
+                    if (!exportedBy && d.exportedBy) exportedBy = d.exportedBy;
+                    if (d.exportDate && d.exportDate < exportDate) exportDate = d.exportDate;
+
+                    // Re-number sites sequentially within this bulk session
+                    sites.forEach(function(s) {
+                        allSites.push(Object.assign({}, s, { projectName: projName }));
+                    });
+                });
+
+                if (errors.length) {
+                    statusEl.innerHTML = '<span style="color:#c0392b;font-weight:600;">'
+                        + '\u274C ' + errors.join('; ') + '</span>';
+                    return;
+                }
+                if (!allSites.length) {
+                    statusEl.innerHTML = '<span style="color:#c0392b;font-weight:600;">\u274C No valid sites found in selected files.</span>';
+                    return;
+                }
+
+                // Check if all sites share one project
+                var projNames = Object.keys(projects);
+                var projSummary = projNames.map(function(p) {
+                    return '"' + p + '" (' + projects[p] + ' site' + (projects[p] === 1 ? '' : 's') + ')';
+                }).join(', ');
+
+                var mergedProjectName = projNames.length === 1
+                    ? projNames[0]
+                    : projNames.join(' + ');
+
+                // Re-number all sites 1…N
+                allSites.forEach(function(s, i) { s.siteNumber = i + 1; });
+
+                // Load into reviewData and render
+                reviewData = {
+                    tool:        'Green Scorpions Bulk Import',
+                    exportDate:  exportDate,
+                    exportedBy:  exportedBy || 'Bulk Import',
+                    projectName: mergedProjectName,
+                    siteCount:   allSites.length,
+                    sites:       allSites,
+                    _bulkImport: true,
+                    _fileCount:  files.length,
+                    _projects:   projects
+                };
+
+                // Show status
+                var warn = projNames.length > 1
+                    ? ' <span style="color:#d35400;font-weight:600;">\u26A0 Sites from ' + projNames.length + ' different projects were merged.</span>'
+                    : '';
+                statusEl.innerHTML = '<span style="color:#1e8449;font-weight:600;">'
+                    + '\u2705 ' + allSites.length + ' site(s) merged from '
+                    + files.length + ' file(s) &mdash; Project: ' + projSummary
+                    + '</span>' + warn;
+
+                // Scroll to and show review content (same rendering pipeline)
+                renderReview();
+                document.getElementById('reviewContent').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+                // Reset input
+                event.target.value = '';
+
+            }).catch(function(err) {
+                statusEl.innerHTML = '<span style="color:#c0392b;font-weight:600;">\u274C ' + err + '</span>';
+            });
         }
 
         function renderReview() {
@@ -4295,7 +4541,239 @@
         if (ind) { ind.textContent = '\u2705 All data cleared'; ind.style.color = '#a9dfbf'; }
     }
 
-    // ── Service Worker (offline cache) ──────────────────────────
+
+    // ═══════════════════════════════════════════════════════════════
+    // SKETCH PAD ENGINE
+    // ═══════════════════════════════════════════════════════════════
+    var _sketches       = {};
+    var _projSketch     = {};
+    var _activeEngines  = {};
+    var _projSketchEngine = null;
+
+    function sketchEngine(canvasId, state) {
+        var canvas = document.getElementById(canvasId);
+        if (!canvas) return null;
+        var ctx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth || (canvas.parentElement ? canvas.parentElement.offsetWidth : 340);
+
+        function getPos(e) {
+            var r   = canvas.getBoundingClientRect();
+            var src = e.touches ? e.touches[0] : e;
+            return {
+                x: (src.clientX - r.left) * (canvas.width  / r.width),
+                y: (src.clientY - r.top)  * (canvas.height / r.height)
+            };
+        }
+
+        function drawCmd(ctx, cmd) {
+            ctx.save();
+            ctx.strokeStyle = cmd.colour || '#222';
+            ctx.fillStyle   = cmd.colour || '#222';
+            ctx.lineWidth   = cmd.size   || 4;
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+            if (cmd.tool === 'eraser') {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.lineWidth = cmd.size || 18;
+            }
+            switch (cmd.tool) {
+                case 'pen': case 'eraser':
+                    if (!cmd.pts || cmd.pts.length < 2) break;
+                    ctx.beginPath(); ctx.moveTo(cmd.pts[0].x, cmd.pts[0].y);
+                    for (var i = 1; i < cmd.pts.length; i++) ctx.lineTo(cmd.pts[i].x, cmd.pts[i].y);
+                    ctx.stroke(); break;
+                case 'line':
+                    if (!cmd.x1 && cmd.x1 !== 0) break;
+                    ctx.beginPath(); ctx.moveTo(cmd.x1,cmd.y1); ctx.lineTo(cmd.x2,cmd.y2); ctx.stroke(); break;
+                case 'arrow':
+                    if (!cmd.x1 && cmd.x1 !== 0) break;
+                    ctx.beginPath(); ctx.moveTo(cmd.x1,cmd.y1); ctx.lineTo(cmd.x2,cmd.y2); ctx.stroke();
+                    var ang = Math.atan2(cmd.y2-cmd.y1, cmd.x2-cmd.x1);
+                    var aL  = Math.max(10,(cmd.size||4)*3.5);
+                    ctx.beginPath();
+                    ctx.moveTo(cmd.x2,cmd.y2);
+                    ctx.lineTo(cmd.x2-aL*Math.cos(ang-0.45), cmd.y2-aL*Math.sin(ang-0.45));
+                    ctx.lineTo(cmd.x2-aL*Math.cos(ang+0.45), cmd.y2-aL*Math.sin(ang+0.45));
+                    ctx.closePath(); ctx.fill(); break;
+                case 'circle':
+                    if (!cmd.cx && cmd.cx !== 0) break;
+                    ctx.beginPath(); ctx.arc(cmd.cx,cmd.cy,Math.max(2,cmd.r||10),0,Math.PI*2); ctx.stroke(); break;
+                case 'rect':
+                    if (!cmd.x1 && cmd.x1 !== 0) break;
+                    ctx.strokeRect(cmd.x1,cmd.y1,cmd.x2-cmd.x1,cmd.y2-cmd.y1); break;
+                case 'text':
+                    ctx.font = 'bold '+Math.max(12,(cmd.size||4)*3)+'px Arial';
+                    ctx.fillStyle = cmd.colour||'#222';
+                    ctx.fillText(cmd.text||'',cmd.x,cmd.y); break;
+            }
+            ctx.restore();
+        }
+
+        function redraw() {
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.fillStyle='white'; ctx.fillRect(0,0,canvas.width,canvas.height);
+            state.history.forEach(function(c){ drawCmd(ctx,c); });
+            if (state.current) drawCmd(ctx,state.current);
+        }
+
+        function onStart(e) {
+            e.preventDefault();
+            var p = getPos(e);
+            state.drawing = true;
+            if (state.tool==='pen'||state.tool==='eraser') {
+                state.current = {tool:state.tool,colour:state.colour,size:state.size,pts:[p]};
+            } else {
+                state.current = {tool:state.tool,colour:state.colour,size:state.size,
+                    x1:p.x,y1:p.y,x2:p.x,y2:p.y,cx:p.x,cy:p.y,r:0};
+            }
+        }
+        function onMove(e) {
+            e.preventDefault();
+            if (!state.drawing||!state.current) return;
+            var p=getPos(e);
+            if (state.tool==='pen'||state.tool==='eraser') { state.current.pts.push(p); }
+            else { state.current.x2=p.x; state.current.y2=p.y;
+                   state.current.r=Math.sqrt(Math.pow(p.x-state.current.cx,2)+Math.pow(p.y-state.current.cy,2)); }
+            redraw();
+        }
+        function onEnd(e) {
+            if (!state.drawing) return;
+            state.drawing=false;
+            if (state.current&&state.tool!=='text') { state.history.push(state.current); state.current=null; }
+            redraw();
+        }
+
+        canvas.addEventListener('mousedown',  onStart);
+        canvas.addEventListener('mousemove',  onMove);
+        canvas.addEventListener('mouseup',    onEnd);
+        canvas.addEventListener('touchstart', onStart, {passive:false});
+        canvas.addEventListener('touchmove',  onMove,  {passive:false});
+        canvas.addEventListener('touchend',   onEnd);
+        redraw();
+        return { redraw:redraw };
+    }
+
+    // ── Per-site sketch ─────────────────────────────────────────────
+    function initSketch(siteId) {
+        if (!_sketches[siteId]) _sketches[siteId]={history:[],current:null,drawing:false,tool:'pen',colour:'#222',size:4};
+        _activeEngines[siteId] = sketchEngine(siteId+'_canvas', _sketches[siteId]);
+    }
+    function toggleSketch(siteId) {
+        var body=document.getElementById(siteId+'_sketchBody');
+        var prev=document.getElementById(siteId+'_sketchPreview');
+        var tog=document.getElementById(siteId+'_sketchToggle');
+        var hasSaved=_sketches[siteId]&&_sketches[siteId].saved;
+        if (hasSaved&&body.style.display==='none'&&prev.style.display==='none') {
+            prev.style.display='block'; tog.textContent='Edit Sketch';
+        } else if (body.style.display==='none') {
+            body.style.display='block'; if(prev)prev.style.display='none';
+            tog.textContent='Close'; setTimeout(function(){initSketch(siteId);},60);
+        } else { body.style.display='none'; tog.textContent=hasSaved?'Edit Sketch':'Open Sketch Pad'; }
+    }
+    function setSketchTool(siteId,tool) {
+        if(!_sketches[siteId])return;
+        _sketches[siteId].tool=tool;
+        document.querySelectorAll('[id^="'+siteId+'_tool_"]').forEach(function(b){b.classList.remove('active');});
+        var b=document.getElementById(siteId+'_tool_'+tool); if(b)b.classList.add('active');
+        if(tool==='eraser'){var s=document.getElementById(siteId+'_sketchSize');if(s)s.value='18';_sketches[siteId].size=18;}
+    }
+    function setSketchColour(siteId,colour) {
+        if(!_sketches[siteId])return;
+        _sketches[siteId].colour=colour;
+        document.querySelectorAll('[id^="'+siteId+'_col_"]').forEach(function(b){b.classList.remove('active');});
+        var m={'#222':'black','#1a5276':'blue','#c0392b':'red','#1a3c2a':'green','#d35400':'orange'};
+        var b=document.getElementById(siteId+'_col_'+(m[colour]||'black')); if(b)b.classList.add('active');
+    }
+    function setSketchSize(siteId,size){if(_sketches[siteId])_sketches[siteId].size=parseInt(size);}
+    function sketchUndo(siteId){if(_sketches[siteId])_sketches[siteId].history.pop();if(_activeEngines[siteId])_activeEngines[siteId].redraw();}
+    function sketchClear(siteId){if(_sketches[siteId])_sketches[siteId].history=[];if(_activeEngines[siteId])_activeEngines[siteId].redraw();}
+    function sketchAddText(siteId) {
+        var txt=prompt('Enter label text:'); if(!txt)return;
+        var s=_sketches[siteId]; if(!s)return;
+        var cv=document.getElementById(siteId+'_canvas');
+        s.history.push({tool:'text',text:txt,x:cv?cv.width/2:160,y:cv?cv.height/2:140,colour:s.colour,size:s.size});
+        if(_activeEngines[siteId])_activeEngines[siteId].redraw();
+    }
+    function sketchSave(siteId) {
+        var cv=document.getElementById(siteId+'_canvas');
+        if(!cv||!_sketches[siteId])return;
+        var url=cv.toDataURL('image/png');
+        _sketches[siteId].saved=url;
+        var img=document.getElementById(siteId+'_sketchImg');
+        var prev=document.getElementById(siteId+'_sketchPreview');
+        var body=document.getElementById(siteId+'_sketchBody');
+        var tog=document.getElementById(siteId+'_sketchToggle');
+        if(img)img.src=url; if(prev)prev.style.display='block';
+        if(body)body.style.display='none'; if(tog)tog.textContent='Edit Sketch';
+        fieldAutoSave();
+    }
+    function editSketch(siteId) {
+        var prev=document.getElementById(siteId+'_sketchPreview');
+        var body=document.getElementById(siteId+'_sketchBody');
+        var tog=document.getElementById(siteId+'_sketchToggle');
+        if(prev)prev.style.display='none'; if(body)body.style.display='block';
+        if(tog)tog.textContent='Close'; setTimeout(function(){initSketch(siteId);},60);
+    }
+    function deleteSketch(siteId) {
+        if(!confirm('Delete this site sketch?'))return;
+        if(_sketches[siteId]){_sketches[siteId].saved=null;_sketches[siteId].history=[];}
+        var prev=document.getElementById(siteId+'_sketchPreview');
+        var tog=document.getElementById(siteId+'_sketchToggle');
+        if(prev)prev.style.display='none'; if(tog)tog.textContent='Open Sketch Pad';
+        fieldAutoSave();
+    }
+
+    // ── Project sketch ──────────────────────────────────────────────
+    function openProjectSketch() {
+        var proj=getActiveProject();
+        var modal=document.getElementById('projSketchModal');
+        if(!modal)return;
+        var t=document.getElementById('projSketchTitle');
+        var s=document.getElementById('projSketchSub');
+        if(t)t.textContent='✏️ '+(proj?proj.name:'Project')+' — Sketch';
+        var n=document.querySelectorAll('.field-site-card').length;
+        if(s)s.textContent=n+' site'+(n===1?'':'s')+' in this project';
+        modal.style.display='flex';
+        var pid=proj?proj.id:'default';
+        if(!_projSketch[pid])_projSketch[pid]={history:[],current:null,drawing:false,tool:'pen',colour:'#222',size:4};
+        setTimeout(function(){
+            var cv=document.getElementById('projSketchCanvas');
+            if(cv)cv.width=cv.offsetWidth||cv.parentElement.offsetWidth||340;
+            _projSketchEngine=sketchEngine('projSketchCanvas',_projSketch[pid]);
+        },80);
+    }
+    function closeProjSketch(){var m=document.getElementById('projSketchModal');if(m)m.style.display='none';}
+    function setProjTool(tool){
+        var proj=getActiveProject();var pid=proj?proj.id:'default';
+        if(_projSketch[pid])_projSketch[pid].tool=tool;
+        document.querySelectorAll('[id^="projSketch_tool_"]').forEach(function(b){b.classList.remove('active');});
+        var b=document.getElementById('projSketch_tool_'+tool);if(b)b.classList.add('active');
+        if(tool==='eraser'){document.getElementById('projSketchSize').value='18';if(_projSketch[pid])_projSketch[pid].size=18;}
+    }
+    function setProjColour(colour){
+        var proj=getActiveProject();var pid=proj?proj.id:'default';
+        if(_projSketch[pid])_projSketch[pid].colour=colour;
+        document.querySelectorAll('[id^="projSketch_col_"]').forEach(function(b){b.classList.remove('active');});
+        var m={'#222':'black','#1a5276':'blue','#c0392b':'red','#1a3c2a':'green','#d35400':'orange'};
+        var b=document.getElementById('projSketch_col_'+(m[colour]||'black'));if(b)b.classList.add('active');
+    }
+    function setProjSize(size){var proj=getActiveProject();var pid=proj?proj.id:'default';if(_projSketch[pid])_projSketch[pid].size=parseInt(size);}
+    function projSketchUndo(){var proj=getActiveProject();var pid=proj?proj.id:'default';if(_projSketch[pid])_projSketch[pid].history.pop();if(_projSketchEngine)_projSketchEngine.redraw();}
+    function projSketchClear(){var proj=getActiveProject();var pid=proj?proj.id:'default';if(_projSketch[pid])_projSketch[pid].history=[];if(_projSketchEngine)_projSketchEngine.redraw();}
+    function projSketchAddText(){
+        var txt=prompt('Enter label text:');if(!txt)return;
+        var proj=getActiveProject();var pid=proj?proj.id:'default';var s=_projSketch[pid];if(!s)return;
+        var cv=document.getElementById('projSketchCanvas');
+        s.history.push({tool:'text',text:txt,x:cv?cv.width/2:160,y:cv?cv.height/2:180,colour:s.colour,size:s.size});
+        if(_projSketchEngine)_projSketchEngine.redraw();
+    }
+    function projSketchSave(){
+        var cv=document.getElementById('projSketchCanvas');
+        var proj=getActiveProject();var pid=proj?proj.id:'default';
+        if(cv&&_projSketch[pid]){_projSketch[pid].saved=cv.toDataURL('image/png');fieldAutoSave();}
+        closeProjSketch();
+    }
+
+    // -- Service Worker (offline cache)
     if ('serviceWorker' in navigator) {
         var swCode = [
             "const CACHE='gscp-field-v1';",
@@ -4376,6 +4854,51 @@
     <div class="exit-modal-btns">
       <button class="exit-btn-stay" onclick="stayInApp()">Stay in App</button>
       <button class="exit-btn-exit" onclick="confirmExit()">Exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- PROJECT SKETCH MODAL -->
+<div id="projSketchModal" style="display:none;position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,0.6);align-items:flex-end;justify-content:center;">
+  <div style="background:white;border-radius:20px 20px 0 0;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;padding:20px 18px 28px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <div>
+        <div style="font-size:1.05rem;font-weight:700;color:#1a3c2a;" id="projSketchTitle">✏️ Project Sketch</div>
+        <div style="font-size:0.78rem;color:#888;" id="projSketchSub">Overview diagram</div>
+      </div>
+      <button onclick="closeProjSketch()" style="background:#f0f0f0;border:none;border-radius:50%;width:34px;height:34px;font-size:1.1rem;cursor:pointer;">✕</button>
+    </div>
+    <div class="sketch-toolbar">
+      <button class="sketch-tool-btn active" id="projSketch_tool_pen" onclick="setProjTool('pen')">&#x270F; Pen</button>
+      <button class="sketch-tool-btn" id="projSketch_tool_line" onclick="setProjTool('line')">&#x2014; Line</button>
+      <button class="sketch-tool-btn" id="projSketch_tool_arrow" onclick="setProjTool('arrow')">&#x2192; Arrow</button>
+      <button class="sketch-tool-btn" id="projSketch_tool_circle" onclick="setProjTool('circle')">&#x25CB; Circle</button>
+      <button class="sketch-tool-btn" id="projSketch_tool_rect" onclick="setProjTool('rect')">&#x25A1; Rect</button>
+      <button class="sketch-tool-btn" id="projSketch_tool_text" onclick="setProjTool('text')">T Text</button>
+      <button class="sketch-tool-btn" id="projSketch_tool_eraser" onclick="setProjTool('eraser')">&#x232B; Eraser</button>
+    </div>
+    <div class="sketch-toolbar">
+      <span style="font-size:0.75rem;color:#555;font-weight:700;">Colour:</span>
+      <button class="sketch-color-btn active" id="projSketch_col_black" style="background:#222;" onclick="setProjColour('#222')"></button>
+      <button class="sketch-color-btn" id="projSketch_col_blue" style="background:#1a5276;" onclick="setProjColour('#1a5276')"></button>
+      <button class="sketch-color-btn" id="projSketch_col_red" style="background:#c0392b;" onclick="setProjColour('#c0392b')"></button>
+      <button class="sketch-color-btn" id="projSketch_col_green" style="background:#1a3c2a;" onclick="setProjColour('#1a3c2a')"></button>
+      <button class="sketch-color-btn" id="projSketch_col_orange" style="background:#d35400;" onclick="setProjColour('#d35400')"></button>
+      <span style="font-size:0.75rem;color:#555;font-weight:700;margin-left:6px;">Size:</span>
+      <select class="sketch-size-select" id="projSketchSize" onchange="setProjSize(this.value)">
+        <option value="2">Thin</option>
+        <option value="4" selected>Normal</option>
+        <option value="8">Thick</option>
+        <option value="18">Eraser</option>
+      </select>
+    </div>
+    <canvas id="projSketchCanvas" class="sketch-canvas" height="360" style="margin-bottom:8px;"></canvas>
+    <span class="sketch-canvas-label">Project overview — all site locations, access routes, discharge points</span>
+    <div class="sketch-action-row" style="margin-top:10px;">
+      <button class="sketch-action-btn" style="background:#e67e22;" onclick="projSketchUndo()">↩ Undo</button>
+      <button class="sketch-action-btn" style="background:#7d3c98;" onclick="projSketchAddText()">T+ Label</button>
+      <button class="sketch-action-btn" style="background:#2471a3;" onclick="projSketchSave()">💾 Save</button>
+      <button class="sketch-action-btn" style="background:#c0392b;" onclick="projSketchClear()">✕ Clear</button>
     </div>
   </div>
 </div>
