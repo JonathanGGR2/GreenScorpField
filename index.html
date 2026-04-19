@@ -2867,6 +2867,32 @@
                 + '</div>';
         }
 
+        // Resolve IDB keys in site photo arrays to actual data URLs
+        // before review/export (IDB keys are useless outside the collection session)
+        async function resolvePhotosForSites(sites) {
+            for (var si = 0; si < sites.length; si++) {
+                var site = sites[si];
+                if (!site.photos || !site.photos.length) continue;
+                var resolved = [];
+                for (var pi = 0; pi < site.photos.length; pi++) {
+                    var ref = site.photos[pi];
+                    if (!ref) continue;
+                    if (ref.indexOf('data:') === 0) {
+                        // Already a data URL (direct save or IDB-failed fallback)
+                        resolved.push(ref);
+                    } else {
+                        // IDB key — try to load full quality, then thumbnail fallback
+                        var src = await loadPhotoIDB(ref);
+                        if (!src) src = loadPhotoThumb(ref); // localStorage thumbnail
+                        if (src) resolved.push(src);
+                        // If both fail, skip — photo simply won't appear in report
+                    }
+                }
+                site.photos = resolved;
+            }
+            return sites;
+        }
+
         function handleReviewUpload(event) {
             var file = event.target.files[0];
             if (!file) return;
@@ -2877,8 +2903,13 @@
                     if (!data.sites || !data.sites.length) throw new Error('No site data found in this file.');
                     reviewData = data;
                     document.getElementById('reviewUploadStatus').innerHTML =
-                        '<span style="color:#1e8449;font-weight:600;">✅ ' + data.sites.length + ' site(s) loaded from ' + file.name + '</span>';
-                    renderReview();
+                        '<span style="color:#1e8449;font-weight:600;">✅ ' + data.sites.length + ' site(s) loaded — resolving photos…</span>';
+                    resolvePhotosForSites(data.sites).then(function(resolved) {
+                        reviewData.sites = resolved;
+                        document.getElementById('reviewUploadStatus').innerHTML =
+                            '<span style="color:#1e8449;font-weight:600;">✅ ' + resolved.length + ' site(s) loaded from ' + file.name + '</span>';
+                        renderReview();
+                    });
                 } catch(err) {
                     document.getElementById('reviewUploadStatus').innerHTML =
                         '<span style="color:#c0392b;font-weight:600;">❌ ' + err.message + '</span>';
@@ -2990,9 +3021,12 @@
                     + files.length + ' file(s) &mdash; Project: ' + projSummary
                     + '</span>' + warn;
 
-                // Scroll to and show review content (same rendering pipeline)
-                renderReview();
-                document.getElementById('reviewContent').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Resolve IDB keys to data URLs before rendering
+                resolvePhotosForSites(allSites).then(function(resolved) {
+                    reviewData.sites = resolved;
+                    renderReview();
+                    document.getElementById('reviewContent').scrollIntoView({ behavior: 'smooth', block: 'start' });
+                });
 
                 // Reset input
                 event.target.value = '';
@@ -3333,24 +3367,46 @@
                 }
 
                 // Photos
+                // ── Photos ──────────────────────────────────────────────
                 if (site.photos && site.photos.length) {
                     all.push(new D.Paragraph({ spacing: { before: 220, after: 80 },
                         children: [new D.TextRun({ text: 'Site Photographs (' + site.photos.length + ')', bold: true, size: 22, color: '1A3C2A', font: 'Arial' })] }));
 
                     for (var pi2 = 0; pi2 < site.photos.length; pi2++) {
                         try {
-                            var dims  = await getImageDims(site.photos[pi2]);
+                            var photoSrc = site.photos[pi2];
+                            // Skip if not a data URL (unresolved IDB key — should not happen after resolvePhotosForSites)
+                            if (!photoSrc || photoSrc.indexOf('data:') !== 0) continue;
+                            var dims  = await getImageDims(photoSrc);
                             var maxW  = 500;
                             var sc    = Math.min(1, maxW / dims.w);
                             var dW    = Math.round(dims.w * sc);
                             var dH    = Math.round(dims.h * sc);
-                            var imgBuf = base64ToUint8Array(site.photos[pi2]);
+                            var imgBuf = base64ToUint8Array(photoSrc);
                             all.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 100, after: 80 },
                                 children: [new D.ImageRun({ data: imgBuf, transformation: { width: dW, height: dH }, type: 'jpg' })] }));
                             all.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 0, after: 160 },
                                 children: [new D.TextRun({ text: 'Figure ' + (pi2 + 1) + ':  ' + sname + '  |  ' + dt, size: 17, italics: true, color: '888888', font: 'Arial' })] }));
                         } catch(e2) { /* skip unreadable photo */ }
                     }
+                }
+
+                // ── Site sketch ──────────────────────────────────────────
+                if (site.sketch && site.sketch.indexOf('data:') === 0) {
+                    try {
+                        all.push(new D.Paragraph({ spacing: { before: 220, after: 80 },
+                            children: [new D.TextRun({ text: 'Site Sketch / Diagram', bold: true, size: 22, color: '1A3C2A', font: 'Arial' })] }));
+                        var sketchDims = await getImageDims(site.sketch);
+                        var skMaxW = 480;
+                        var skSc   = Math.min(1, skMaxW / sketchDims.w);
+                        var skW    = Math.round(sketchDims.w * skSc);
+                        var skH    = Math.round(sketchDims.h * skSc);
+                        var skBuf  = base64ToUint8Array(site.sketch);
+                        all.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 80, after: 80 },
+                            children: [new D.ImageRun({ data: skBuf, transformation: { width: skW, height: skH }, type: 'png' })] }));
+                        all.push(new D.Paragraph({ alignment: D.AlignmentType.CENTER, spacing: { before: 0, after: 160 },
+                            children: [new D.TextRun({ text: 'Site diagram:  ' + sname, size: 17, italics: true, color: '888888', font: 'Arial' })] }));
+                    } catch(skErr) { /* skip unreadable sketch */ }
                 }
             }
 
